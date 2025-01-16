@@ -1,0 +1,2 @@
+_target_: spectre.data.HEtoCODEXDataModule
+train_config: ${train_config}

@@ -1,0 +1,2 @@
+_target_: spectre.models.spectre_tile.HandEtoMeanProteinAbundance
+lr_scheduler: ${lr_config}

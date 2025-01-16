@@ -1,0 +1,3 @@
+_target_: spectre.utils.WandbRunConfig
+project: mds_codex
+run_name: default_name
