@@ -79,7 +79,7 @@ def main():
 
     callbacks = [ModelCheckpoint(every_n_epochs=train_config.checkpoint_every_n_epochs,
                                 save_top_k=2,
-                                monitor="val_loss",
+                                monitor="train_loss",
                                 mode="min")
                 ]
 
@@ -98,7 +98,6 @@ def main():
     print("Training Model...")
     trainer.fit(model, datamodule=data_module)
     wandb.config.update(dict(config))
-    wandb.finish()
 
 
 if __name__ == "__main__":

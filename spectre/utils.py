@@ -87,7 +87,6 @@ class HyperParameterScheduler:
         self.final_value = final_value
         self.warmup_epochs = warmup_epochs
         self.warmup_initial_value = warmup_initial_value
-        
         self.schedule = np.array([])
 
     def compute_schedule(self, dataloader):
