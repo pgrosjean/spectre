@@ -78,6 +78,7 @@ def main():
         gpu_num = [train_config.gpu_num]
 
     callbacks = [ModelCheckpoint(every_n_epochs=train_config.checkpoint_every_n_epochs,
+                                dirpath='/scratch/pgrosjean/wandb/checkpoints/',
                                 save_top_k=2,
                                 monitor="train_loss",
                                 mode="min")
@@ -97,8 +98,6 @@ def main():
     # Training the model
     print("Training Model...")
     trainer.fit(model, datamodule=data_module)
-    wandb.config.update(dict(config))
-
 
 if __name__ == "__main__":
     main()

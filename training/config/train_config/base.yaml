@@ -1,7 +1,7 @@
 _target_: spectre.utils.TrainConfig
-batch_size: 64
+batch_size: 6
 learning_rate: ${lr_config.base_value}
-max_epoch_number: 200
+max_epoch_number: 300
 num_workers: 16
 warmup_epochs: 10
 checkpoint_every_n_epochs: 1

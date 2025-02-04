@@ -1,0 +1,12 @@
+_target_: spectre.models.spectre_mae.SpectreMaskedAutoencoderViT
+lr_scheduler: ${lr_config}
+img_size: 224
+patch_size: 16
+n_codex_channels: 13
+embed_dim: 768
+depth: 12
+num_heads: 12
+decoder_embed_dim: 512
+decoder_depth: 8
+decoder_num_heads: 16
+mlp_ratio: 4
