@@ -2,10 +2,10 @@ import timm
 import torch
 from torch import nn
 from spectre.utils import HyperParameterScheduler
-import lightning as L
+import pytorch_lightning as pl
 
 
-class HandEtoMeanProteinAbundance(L.LightningModule):
+class HandEtoMeanProteinAbundance(pl.LightningModule):
     def __init__(self,
                  lr_scheduler: HyperParameterScheduler):
         super(HandEtoMeanProteinAbundance, self).__init__()

@@ -8,42 +8,9 @@ from spectre.models.utils.pos_embed import get_2d_sincos_pos_embed
 from spectre.models.utils.mem_eff_block import Block
 import wandb
 from spectre.utils import HyperParameterScheduler
-
-class ChannelSpatialAttentionBlock(nn.Module):
-    """
-    """
-    def __init__(self,
-                 dim=1024,
-                 num_heads=16,
-                 mlp_ratio=4,
-                 norm_layer=nn.LayerNorm):
-        super().__init__()
-        self.channel_transformer = Block(dim=dim,
-                                         num_heads=num_heads,
-                                         mlp_ratio=mlp_ratio,
-                                         qkv_bias=True,
-                                         norm_layer=norm_layer)
-        self.spatial_transformer = Block(dim=dim,
-                                        num_heads=num_heads,
-                                        mlp_ratio=mlp_ratio,
-                                        qkv_bias=True,
-                                        norm_layer=norm_layer)
-        
-    def forward(self, x):
-        # Expected input shape: [batch, n_channels, n_patches, embed_dim]
-        x = x.permute(0, 2, 1, 3)  # [batch, n_patches, n_channels, embed_dim]
-        B, P, C, E = x.shape
-        x = x.reshape(shape=(B * P, C, E))
-        x = self.channel_transformer(x)
-        x = x.reshape(shape=(B, P, C, E))
-        x = x.permute(0, 2, 1, 3) # [batch, n_channels, n_patches, embed_dim]
-        x = x.reshape(shape=(B * C, P, E))
-        x = self.spatial_transformer(x)
-        x = x.reshape(shape=(B, C, P, E))
-        return x
         
 
-class SpectreMaskedAutoencoderViT(pl.LightningModule):
+class MaskedAutoencoderViT(pl.LightningModule):
     """ Masked Autoencoder with VisionTransformer backbone
     """
     def __init__(self,
@@ -74,12 +41,11 @@ class SpectreMaskedAutoencoderViT(pl.LightningModule):
         self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, embed_dim), requires_grad=False)  # fixed sin-cos embedding
         self.channel_embed = nn.Parameter(torch.zeros(1, n_codex_channels + 1, 1, embed_dim), requires_grad=True)  # learnable channel embedding
 
-        self.blocks = nn.ModuleList([
-            ChannelSpatialAttentionBlock(dim=embed_dim,
+        self.blocks = nn.ModuleList([Block(dim=embed_dim,
                                          num_heads=num_heads,
                                          mlp_ratio=mlp_ratio,
                                          norm_layer=norm_layer)
-            for i in range(depth)])
+            for _ in range(depth)])
         self.norm = norm_layer(embed_dim)
 
         # --------------------------------------------------------------------------
@@ -91,10 +57,8 @@ class SpectreMaskedAutoencoderViT(pl.LightningModule):
         self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
 
         self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
-        self.channel_embed_decoder = nn.Parameter(torch.zeros(1, n_codex_channels + 1, 1, decoder_embed_dim), requires_grad=True)
 
-        self.decoder_blocks = nn.ModuleList([
-            ChannelSpatialAttentionBlock(dim=decoder_embed_dim,
+        self.decoder_blocks = nn.ModuleList([Block(dim=decoder_embed_dim,
                                          num_heads=decoder_num_heads,
                                          mlp_ratio=mlp_ratio,
                                          norm_layer=norm_layer)
@@ -106,7 +70,6 @@ class SpectreMaskedAutoencoderViT(pl.LightningModule):
         # --------------------------------------------------------------------------
 
         self.norm_pix_loss = norm_pix_loss
-
         self.initialize_weights()
 
     def initialize_weights(self):
@@ -199,57 +162,47 @@ class SpectreMaskedAutoencoderViT(pl.LightningModule):
         imgs = x.reshape(shape=(x.shape[0], x.shape[1], h * p, h * p)) # shape: [N, C, H, W]
         return imgs
     
-    def channel_wise_random_masking(self, x, mask_ratio):
+    def random_masking(self, x, mask_ratio):
         """
-        Perform channel-wise masking by setting the channel to zero.
-        x: [N, C, L, D], sequence
+        Perform per-sample random masking by per-sample shuffling.
+        Per-sample shuffling is done by argsort random noise.
+        x: [N, L, D], sequence
         """
-        N, C, L, D = x.shape
-        noise = torch.rand(N, C, L, device=x.device)  # noise in [0, 1]
-
-        # sort noise for each sample per channel
-        ids_shuffle = torch.argsort(noise, dim=2)  # ascend: small is keep, large is remove
-        ids_restore = torch.argsort(ids_shuffle, dim=2)
+        N, L, D = x.shape  # batch, length, dim
+        len_keep = int(L * (1 - mask_ratio))
+        
+        noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
+        
+        # sort noise for each sample
+        ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
 
         # keep the first subset
-        ids_keep = ids_shuffle[:, :, :int(L * (1 - mask_ratio))]
-        x_masked = torch.gather(x, dim=2, index=ids_keep.unsqueeze(-1).repeat(1, 1, 1, D))
+        ids_keep = ids_shuffle[:, :len_keep]
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
 
         # generate the binary mask: 0 is keep, 1 is remove
-        mask = torch.ones([N, C, L], device=x.device)
-        mask[:, :, :int(L * (1 - mask_ratio))] = 0
+        mask = torch.ones([N, L], device=x.device)
+        mask[:, :len_keep] = 0
         # unshuffle to get the binary mask
-        mask = torch.gather(mask, dim=2, index=ids_restore)
+        mask = torch.gather(mask, dim=1, index=ids_restore)
 
-        # x_masked_shape: [N, C, L, D], mask_shape: [N, C, L], ids_restore_shape: [N, C, L]
         return x_masked, mask, ids_restore
 
-    def forward_encoder(self, x_he, x_codex, mask_ratio):
+    def forward_encoder(self, x_he, mask_ratio):
         # embed patches
         x_he = self.patch_embed_he(x_he) # shape [N, L, D]
-
-        # x_codex shape: [N, C, H, W]
-        N, C, _, _ = x_codex.shape
-        x_codex = x_codex.view(x_codex.shape[0]*x_codex.shape[1], x_codex.shape[2], x_codex.shape[3]) # [N*C, H, W]
-        x_codex = x_codex.unsqueeze(1) # [N*C, 1, H, W]
-        x_codex = self.patch_embed_codex(x_codex) # [N*C, L, D]
         
         # add pos embed w/o cls token
         x_he = x_he + self.pos_embed[:, 1:, :]
-        x_codex = x_codex + self.pos_embed[:, 1:, :]
-        x_codex = x_codex.view(N, C, x_codex.shape[1], x_codex.shape[2]) # [N, C, L, D]
-        x = torch.concat((x_he.unsqueeze(1), x_codex), dim=1) # [N, C+1, L, D]
-        # add the channel embed
-        x = x + self.channel_embed 
 
         # masking: length -> length * mask_ratio
-        x, mask, ids_restore = self.channel_wise_random_masking(x, mask_ratio)
+        x, mask, ids_restore = self.random_masking(x_he, mask_ratio)
 
         # append cls token
         cls_token = self.cls_token + self.pos_embed[:, :1, :] # shape: [1, 1, D]
-        cls_token = cls_token.unsqueeze(0) # shape: [1, 1, 1, D]
-        cls_tokens = cls_token.expand(x.shape[0], x.shape[1], -1, -1) # shape: [N, C+1, 1, D]
-        x = torch.cat((cls_tokens, x), dim=2) # shape: [N, C+1, L+1, D]
+        cls_tokens = cls_token.expand(x.shape[0], -1, -1) # shape: [N, 1, D]
+        x = torch.cat((cls_tokens, x), dim=1) # shape: [N, L+1, D]
 
         # apply Transformer blocks
         for blk in self.blocks:
@@ -260,22 +213,19 @@ class SpectreMaskedAutoencoderViT(pl.LightningModule):
 
     def forward_decoder(self, x, ids_restore):
         # embed tokens
-        x = self.decoder_embed(x) # shape: [N, C, L, D_decoder]
+        x = self.decoder_embed(x) # shape: [N, L, D_decoder]
 
         # append mask tokens to sequence
-        mask_tokens = self.mask_token.repeat(x.shape[0], x.shape[1], ids_restore.shape[2] + 1 - x.shape[2], 1)
-        x_ = torch.cat([x[:, :, 1:, :], mask_tokens], dim=2)  # no cls token
-        x_ = torch.gather(x_, dim=2, index=ids_restore.unsqueeze(-1).repeat(1, 1, 1, x.shape[3]))  # unshuffle
-        x = torch.cat([x[:, :, :1, :], x_], dim=2)  # append cls token
+        mask_tokens = self.mask_token.repeat(x.shape[0], ids_restore.shape[1] + 1 - x.shape[1], 1) # [N, L, D_decoder]
+        x_ = torch.cat([x[:, 1:, :], mask_tokens], dim=1)  # no cls token
+        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[2]))  # unshuffle
+        x = torch.cat([x[:, :1, :], x_], dim=1)  # append cls token
 
         # add pos embed
-        N, C, L, D_decoder = x.shape
-        x = x.view(x.shape[0]*x.shape[1], x.shape[2], x.shape[3])  # [N*C, L, D_decoder]
+        N, L, D_decoder = x.shape
+        x = x.view(x.shape[0], x.shape[1], x.shape[2])  # [N*C, L, D_decoder]
         x = x + self.decoder_pos_embed
-        x = x.view(N, C, L, D_decoder) # [N, C, L, D_decoder]
-
-        # add channel embed
-        x = x + self.channel_embed_decoder
+        x = x.view(N, L, D_decoder) # [N, L, D_decoder]
 
         # apply Transformer blocks
         for blk in self.decoder_blocks:
@@ -283,18 +233,14 @@ class SpectreMaskedAutoencoderViT(pl.LightningModule):
         x = self.decoder_norm(x) # shape: [N, C, L, D_decoder]
 
         # predictor projection
-        x_he = x[:, 0, :, :] # [N, L, D_decoder]
+        x_he = x[:, :, :] # [N, L, D_decoder]
         x_he = self.decoder_pred_he(x_he) # [N, L, p*p*3]
-        x_codex = x[:, 1:, :, :]
-        x_codex = self.decoder_pred_codex(x_codex) # [N, C, L, p*p]
 
         # remove cls token
-        assert len(x_he.shape) == 3 and len(x_codex.shape) == 4, f"{x_he.shape}, {x_codex.shape}"
         x_he = x_he[:, 1:, :]
-        x_codex = x_codex[:, :, 1:, :]
-        return x_he, x_codex
+        return x_he
 
-    def forward_loss(self, he_imgs, codex_imgs, pred_he, pred_codex, mask):
+    def forward_loss(self, he_imgs, pred_he, mask):
         """
         he_imgs: [N, 3, H, W]
         codex_imgs: [N, C, H, W]
@@ -303,67 +249,43 @@ class SpectreMaskedAutoencoderViT(pl.LightningModule):
         mask: [N, C, L], 0 is keep, 1 is remove, 
         """
         target_he = self.patchify_he(he_imgs) # shape: [N, L, p*p*3]
-        target_codex = self.patchify_codex(codex_imgs) # shape: [N, C, L, p*p]
         loss_he = (pred_he - target_he) ** 2  # shape [N, L, p*p*3]
         loss_he = loss_he.mean(dim=-1)  # [N, L], mean loss per patch
-        loss_codex = (pred_codex - target_codex) ** 2  # shape [N, C, L, p*p]
-        loss_codex = loss_codex.mean(dim=-1) # [N, C, L], mean loss per patch
 
         mask_he = mask[:, 0, :] # [N, L]
-        mask_codex = mask[:, 1:, :] # [N, C, L]
         loss_he = (loss_he * mask_he).sum() / mask_he.sum()  # mean loss on removed patches
-        loss_codex = (loss_codex * mask_codex).sum() / mask_codex.sum()  # mean loss on removed patches
-        loss = loss_he + loss_codex
+        loss = loss_he
         return loss
 
-    def forward(self, he_imgs, codex_imgs, mask_ratio=0.75):
-        latent, mask, ids_restore = self.forward_encoder(he_imgs, codex_imgs, mask_ratio)
+    def forward(self, he_imgs, mask_ratio=0.75):
+        latent, mask, ids_restore = self.forward_encoder(he_imgs, mask_ratio)
         pred_he, pred_codex = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
-        loss = self.forward_loss(he_imgs, codex_imgs, pred_he, pred_codex, mask)
+        loss = self.forward_loss(he_imgs, pred_he, mask)
         pred_he_images = self.unpatchify_he(pred_he)
-        pred_codex_images = self.unpatchify_codex(pred_codex)
-        return loss, pred_he_images, pred_codex_images
+        return loss, pred_he_images
     
     def training_step(self, batch, batch_idx):
         self._update_optimizer()
         self.log('learning_rate', self.lr_scheduler.schedule[self.global_step], prog_bar=False)
-        he_imgs, codex_imgs = batch
-        loss, pred_he_imgs, pred_codex_imgs = self(he_imgs, codex_imgs, mask_ratio=self.mask_ratio)
+        he_imgs = batch
+        loss, pred_he_imgs= self(he_imgs, mask_ratio=self.mask_ratio)
         self.log('train_loss', loss)
         if batch_idx == 0 or batch_idx % 20 == 0:
             image_he = he_imgs[0].cpu().detach().numpy().transpose(1, 2, 0) # shape: [H, W, 3]
             pred_he = pred_he_imgs[0].cpu().detach().numpy().transpose(1, 2, 0) # shape: [H, W, 3]
-            image_codex = codex_imgs[0].cpu().detach().numpy()
-            pred_codex = pred_codex_imgs[0].cpu().detach().numpy()
-            maxes_codex = [np.amax([image_codex[i], pred_codex[i]]) for i in range(image_codex.shape[0])]
-            image_codex = [image_codex[i] / maxes_codex[i] for i in range(len(image_codex))]
-            pred_codex = [pred_codex[i] / maxes_codex[i] for i in range(len(pred_codex))]
             he_to_plot = np.concatenate([image_he, pred_he], axis=1)
             self.logger.experiment.log({"h&e_train": [wandb.Image(he_to_plot)]})
-            codex_to_plot = np.concatenate(image_codex, axis=1)
-            codex_pred_to_plot = np.concatenate(pred_codex, axis=1)
-            images_to_plot = np.concatenate([codex_to_plot, codex_pred_to_plot], axis=0)
-            self.logger.experiment.log({"codex_output_train": [wandb.Image(images_to_plot)]})
         return loss
     
     def validation_step(self, batch, batch_idx):
-        he_imgs, codex_imgs = batch
-        loss, pred_he_imgs, pred_codex_imgs = self(he_imgs, codex_imgs, mask_ratio=self.mask_ratio)
+        he_imgs = batch
+        loss, pred_he_imgs= self(he_imgs, mask_ratio=self.mask_ratio)
         self.log('val_loss', loss)
         if batch_idx == 0 or batch_idx % 20 == 0:
             image_he = he_imgs[0].cpu().detach().numpy().transpose(1, 2, 0) # shape: [H, W, 3]
             pred_he = pred_he_imgs[0].cpu().detach().numpy().transpose(1, 2, 0) # shape: [H, W, 3]
-            image_codex = codex_imgs[0].cpu().detach().numpy()
-            pred_codex = pred_codex_imgs[0].cpu().detach().numpy()
-            maxes_codex = [np.amax([image_codex[i], pred_codex[i]]) for i in range(image_codex.shape[0])]
-            image_codex = [image_codex[i] / maxes_codex[i] for i in range(len(image_codex))]
-            pred_codex = [pred_codex[i] / maxes_codex[i] for i in range(len(pred_codex))]
             he_to_plot = np.concatenate([image_he, pred_he], axis=1)
             self.logger.experiment.log({"h&e_val": [wandb.Image(he_to_plot)]})
-            codex_to_plot = np.concatenate(image_codex, axis=1)
-            codex_pred_to_plot = np.concatenate(pred_codex, axis=1)
-            images_to_plot = np.concatenate([codex_to_plot, codex_pred_to_plot], axis=0)
-            self.logger.experiment.log({"codex_output_val": [wandb.Image(images_to_plot)]})
         return loss
 
     def configure_optimizers(self):

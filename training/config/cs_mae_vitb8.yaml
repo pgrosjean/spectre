@@ -1,0 +1,17 @@
+# Configuration for Hydra
+hydra:
+  run:
+    dir: /tmp/hydra
+  job:
+    chdir: false
+
+defaults:
+  - data_config: spectre_data
+  - model_config: spectre_mae_cs_vitb8
+  - lr_config: linear_warmup_cos_decay
+  - train_config: base
+  - wandb_config: base
+  - _self_
+
+wandb_config:
+  run_name: mae_cs_vitb14

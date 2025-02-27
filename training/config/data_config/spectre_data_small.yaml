@@ -1,0 +1,2 @@
+_target_: spectre.data.SpectreDataSmallModule
+train_config: ${train_config}

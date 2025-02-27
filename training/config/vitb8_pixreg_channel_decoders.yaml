@@ -1,0 +1,17 @@
+# Configuration for Hydra
+hydra:
+  run:
+    dir: /tmp/hydra
+  job:
+    chdir: false
+
+defaults:
+  - data_config: spectre_data
+  - model_config: spectre_vitb8_pixreg_channel_decoders
+  - lr_config: linear_warmup_cos_decay
+  - train_config: base
+  - wandb_config: base
+  - _self_
+
+wandb_config:
+  run_name: vitb8_pixreg_channel_decoders_full

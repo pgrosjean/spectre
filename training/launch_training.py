@@ -2,15 +2,14 @@ import os
 from pathlib import Path
 
 import pytorch_lightning as pl
-from lightning.pytorch.callbacks import Callback, ModelCheckpoint
+from pytorch_lightning.callbacks import Callback, ModelCheckpoint
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
 import torch
-from lightning.pytorch.loggers import WandbLogger
+from pytorch_lightning.loggers import WandbLogger
 import hydra
 import tempfile
 import wandb
-import lightning as L
 
 
 # Setting up the environment for CUDA
@@ -77,16 +76,19 @@ def main():
     else:
         gpu_num = [train_config.gpu_num]
 
+    run_name = wandb_config.run_name
+
     callbacks = [ModelCheckpoint(every_n_epochs=train_config.checkpoint_every_n_epochs,
-                                dirpath='/scratch/pgrosjean/wandb/checkpoints/',
-                                save_top_k=2,
-                                monitor="train_loss",
-                                mode="min")
+                                dirpath=f'/scratch/pgrosjean/wandb/checkpoints/{run_name}/',
+                                save_last=True,
+                                save_top_k=1,
+                                monitor='train_loss',
+                                mode='min')
                 ]
 
     assert torch.cuda.is_available(), "CUDA is not available and is required for training"
 
-    trainer = L.Trainer(accelerator="gpu",
+    trainer = pl.Trainer(accelerator="gpu",
                          devices=gpu_num,
                          logger=logger,
                          enable_checkpointing=True,

@@ -1,0 +1,10 @@
+_target_: spectre.models.spectre_vit_pixreg.SpectreViTPixelRegressor
+lr_scheduler: ${lr_config}
+img_size: 224
+patch_size: 8
+n_codex_channels: 13
+embed_dim: 768
+depth: 12
+num_heads: 12
+mlp_ratio: 4
+individual_decoder: True

@@ -1,0 +1,6 @@
+_target_: spectre.utils.HyperParameterScheduler
+train_config: ${train_config}
+base_value: 1e-5
+final_value: 1e-7
+warmup_initial_value: 1e-7
+warmup_epochs: ${train_config.warmup_epochs}

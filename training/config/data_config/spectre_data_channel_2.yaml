@@ -1,0 +1,3 @@
+_target_: spectre.data.SpectreDataModule
+train_config: ${train_config}
+channel_num: 2

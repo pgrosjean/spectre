@@ -1,0 +1,3 @@
+_target_: spectre.models.spectre_pixgan.SpectrePix2PixGANUNET
+lr_scheduler: ${lr_config}
+n_codex_channels: 13

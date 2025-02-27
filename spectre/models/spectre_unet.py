@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-import lightning as L
+import pytorch_lightning as pl
 import wandb
 import numpy as np
 import torch.nn.functional as F
@@ -151,7 +151,7 @@ class UNet(nn.Module):
 
         return self.out_conv(dec1)
 
-class HandEtoCODEX(L.LightningModule):
+class HandEtoCODEX(pl.LightningModule):
     def __init__(self, lr_scheduler, in_channels=3, out_channels=13):
         super(HandEtoCODEX, self).__init__()
         self.lr_scheduler = lr_scheduler

@@ -1,0 +1,11 @@
+_target_: spectre.models.spectre_pixgan.SpectrePix2PixGAN
+lr_scheduler: ${lr_config}
+img_size: 224
+patch_size: 8
+n_codex_channels: 1
+embed_dim: 768
+depth: 4
+num_heads: 8
+disc_depth: 2
+disc_num_heads: 4
+mlp_ratio: 4
